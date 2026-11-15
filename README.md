@@ -33,11 +33,27 @@ sequenceDiagram
 |---|---|---|
 | GET | `/` | HTML upload page |
 | GET | `/health` | `{"status": "ok", "service": "api-gateway"}` |
-| POST | `/analyze_pcg` | form field `file` = a `.wav` file → JSON report |
+| POST | `/analyze_pcg` | form fields `file` = a `.wav` file, `prompt` = optional clinical context → JSON report |
 | GET | `/docs` | Swagger UI (automatic FastAPI documentation) |
 
-Errors: `400` bad/empty/invalid WAV, `413` file > 20 MB, `422` no file,
+Errors: `400` bad/empty/invalid WAV or rejected prompt, `413` file > 20 MB, `422` no file,
 `502` a service returned a bad answer, `503` a service is down, `504` a service is too slow.
+
+### Guardrails (input checks before anything reaches the AI services)
+
+| Input | Rule | Answer |
+|---|---|---|
+| `file` | must end in `.wav`, not be empty, be ≤ 20 MB, have a valid WAV header and ≥ 1 audio frame | `400` / `413` |
+| `prompt` (optional) | spaces and new lines collapsed; blank = no prompt | — |
+| `prompt` | ≤ 500 characters | `400` |
+| `prompt` | no prompt-injection phrases (`ignore previous instructions`, `system prompt`, `you are now`, …), case-insensitive | `400` |
+
+The cleaned prompt is forwarded to the agent-orchestrator and echoed in the report (`"prompt"` field).
+The gateway also validates every answer of the other services with Pydantic (`502` if the format is wrong).
+
+```bash
+curl -X POST -F "file=@heart.wav" -F "prompt=Patient has chest pain" http://localhost:8000/analyze_pcg
+```
 
 ## Project structure
 
@@ -101,7 +117,7 @@ The gateway reads the service URLs from environment variables
 uv run pytest --cov=api --cov=audio_engine --cov-report=term-missing
 ```
 
-33 tests (18 gateway in `test_api.py` + 15 audio in `test_audio.py`), **98 % coverage** of `api/` + `audio_engine/`. The other services are replaced by an `httpx.MockTransport`,
+43 tests (28 gateway in `test_api.py` + 15 audio in `test_audio.py`), **98 % coverage** of `api/` + `audio_engine/` (`main.py` 100 %). The other services are replaced by an `httpx.MockTransport`,
 so the tests need no network and no Docker. They cover: health, HTML page, file checks,
 the full flow, service down (503), timeout (504), HTTP error / invalid JSON / wrong format (502).
 

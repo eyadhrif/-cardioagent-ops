@@ -57,11 +57,11 @@ async def call_audio_engine(filename: str, content: bytes) -> AudioResult:
         raise ServiceError(502, "audio-engine returned an unexpected format")
 
 
-async def call_orchestrator(filename: str, audio: AudioResult) -> ClinicalReport:
+async def call_orchestrator(filename: str, audio: AudioResult, prompt: str | None = None) -> ClinicalReport:
     data = await _post(
         "agent-orchestrator",
         f"{ORCHESTRATOR_URL}/report",
-        json={"filename": filename, "audio": audio.model_dump()},
+        json={"filename": filename, "audio": audio.model_dump(), "prompt": prompt},
     )
     try:
         return ClinicalReport.model_validate(data)

@@ -41,6 +41,7 @@ class AnalysisReport(BaseModel):
     """Final structured JSON report returned to the client by POST /analyze_pcg."""
 
     file: FileInfo
+    prompt: str | None = None  # the cleaned user prompt that was sent to the agents (None = no prompt)
     audio: AudioResult
     report: ClinicalReport
     disclaimer: str = "Automatic analysis for education/research only. Not a medical diagnosis."

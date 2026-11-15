@@ -32,6 +32,11 @@ def report(request: dict):
         summary = f"No abnormality detected (abnormal probability {probability:.0%})."
         recommendations = ["No immediate action", "Routine follow-up"]
 
+    # The real agents would use the prompt as clinical context; the mock only shows it was received
+    prompt = request.get("prompt")
+    if prompt:
+        summary += f" Context from the user: {prompt}."
+
     return {
         "summary": summary + " [MOCK REPORT]",
         "risk_level": risk,
