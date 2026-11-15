@@ -1,0 +1,94 @@
+# CardioAgent-Ops - start with:  docker compose up --build
+# Our part is Service 5 (api-gateway). Services 3 and 4 are MOCKS with the official service names,
+# so the gateway code does not change when the real services replace them.
+# TP3 adds mlflow-server (Service 6) and audio-trainer (Service 3 training job, see README "TP3").
+
+name: cardioagent-ops
+
+services:
+  # ---------- Service 5: api-gateway (our part) ----------
+  api-gateway:
+    build:
+      context: .
+      dockerfile: docker/api-gateway.Dockerfile
+    ports:
+      - "8000:8000"        # the only port open to the outside: single entry point
+    environment:
+      AUDIO_ENGINE_URL: http://audio-engine:8001        # service name = hostname on the network
+      ORCHESTRATOR_URL: http://agent-orchestrator:8002
+      REQUEST_TIMEOUT: "30"
+    depends_on:
+      - audio-engine
+      - agent-orchestrator
+    networks:
+      - docker-network
+
+  # ---------- Service 3: audio-engine (MOCK) ----------
+  audio-engine:
+    build:
+      context: .
+      dockerfile: docker/mocks.Dockerfile
+    command: uvicorn mocks.audio_engine:app --host 0.0.0.0 --port 8001
+    networks:
+      - docker-network
+
+  # ---------- Service 4: agent-orchestrator (MOCK) ----------
+  agent-orchestrator:
+    build:
+      context: .
+      dockerfile: docker/mocks.Dockerfile
+    command: uvicorn mocks.orchestrator:app --host 0.0.0.0 --port 8002
+    networks:
+      - docker-network
+
+  # ---------- Service 6: mlflow-server (TP3: experiment tracking + model registry) ----------
+  mlflow-server:
+    image: ghcr.io/mlflow/mlflow:v2.17.2
+    command: >
+      mlflow server --host 0.0.0.0 --port 5000
+      --backend-store-uri sqlite:////mlflow/mlflow.db
+      --artifacts-destination /mlflow/artifacts
+    volumes:
+      - mlflow-data:/mlflow   # runs, metrics and models survive "docker compose down"
+    ports:
+      - "5000:5000"           # dev only: to open the MLflow UI at http://localhost:5000
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - docker-network
+
+  # ---------- Service 3: audio-engine, TP3 training job (real code, next to the mock above) ----------
+  audio-trainer:
+    build:
+      context: .
+      dockerfile: docker/audio-engine.Dockerfile
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow-server:5000
+      MLFLOW_EXPERIMENT: TP3-SVM
+      DATA_DIR: /app/data
+      FEATURES_CSV: /app/cache/features.csv
+    volumes:
+      - ./ourdataset/train:/app/data:ro    # the dataset, read-only
+      - ./ourdataset/cache:/app/cache      # features.csv, visible in VS Code
+    depends_on:
+      mlflow-server:
+        condition: service_healthy         # wait until MLflow answers /health
+    # No "ports": internal only, it is reached through the docker-network
+    networks:
+      - docker-network
+
+  # Not implemented yet:
+  #   llm-server     (Service 1, Ollama/vLLM)
+  #   vector-db      (Service 2, Qdrant/ChromaDB)
+
+volumes:
+  mlflow-data:
+
+networks:
+  docker-network:
+    name: docker-network
+    driver: bridge
