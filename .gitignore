@@ -1,0 +1,29 @@
+# Large datasets: never commit them
+dataset/
+ourdataset/
+# features.csv written by the audio-trainer container (already covered above, kept explicit)
+ourdataset/cache/
+
+# Local MLflow runs (if you train without the mlflow-server)
+mlruns/
+mlflow.db
+
+# Local AI-assistant instructions (personal working notes, not part of the project)
+CLAUDE.md
+
+# Course material of the professor (slides, brief, course notebooks): kept locally, not our work
+course/
+
+# Python environments and caches
+.venv/
+__pycache__/
+*.pyc
+
+# Test and coverage outputs
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# OS files
+.DS_Store

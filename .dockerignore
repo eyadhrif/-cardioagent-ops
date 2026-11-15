@@ -1,0 +1,16 @@
+# Keep the Docker build context small: never send datasets or local envs to Docker
+dataset/
+ourdataset/
+.venv/
+.git/
+__pycache__/
+.pytest_cache/
+.coverage
+htmlcov/
+*.pdf
+*.ipynb
+# Local MLflow runs, notebooks and course material are not needed inside any image
+mlruns/
+mlflow.db
+notebooks/
+course/

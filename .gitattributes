@@ -1,0 +1,7 @@
+# Store every text file with LF line endings (Linux CI + Docker), whatever the OS of the developer
+* text=auto eol=lf
+
+# Binary files: never touch them
+*.png binary
+*.wav binary
+*.pdf binary
