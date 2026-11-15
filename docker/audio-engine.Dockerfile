@@ -1,4 +1,6 @@
-# Service 3: audio-engine (TP3: feature extraction + SVM training, tracked in MLflow) - multi-stage build
+# Service 3: audio-engine - multi-stage build. One image, two uses (see docker-compose.yml):
+#   - default command: the HTTP service POST /predict (ONNX Runtime + librosa), port 8001
+#   - audio-trainer:   python -m audio_engine.train_svm (training, tracked in MLflow)
 # Build from the repo root:  docker build -f docker/audio-engine.Dockerfile -t audio-engine .
 
 # ---------- Stage 1: install the dependencies with uv ----------
@@ -27,6 +29,7 @@ WORKDIR /app
 RUN useradd --create-home appuser
 
 COPY --from=builder /app/.venv /app/.venv
+# The code AND the exported model audio_engine/cardio_model.onnx
 COPY audio_engine/ ./audio_engine/
 
 # The cache folder (features.csv) must be writable by the non-root user
@@ -39,5 +42,6 @@ ENV PATH="/app/.venv/bin:$PATH" \
     FEATURES_CSV=/app/cache/features.csv
 
 USER appuser
-# No EXPOSE: this service is internal only
-CMD ["python", "-m", "audio_engine.train_svm"]
+# Port 8001 is used inside docker-network only (no "ports:" in docker-compose.yml)
+EXPOSE 8001
+CMD ["uvicorn", "audio_engine.service:app", "--host", "0.0.0.0", "--port", "8001"]

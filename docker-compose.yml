@@ -1,7 +1,8 @@
 # CardioAgent-Ops - start with:  docker compose up --build
-# Our part is Service 5 (api-gateway). Services 3 and 4 are MOCKS with the official service names,
-# so the gateway code does not change when the real services replace them.
-# TP3 adds mlflow-server (Service 6) and audio-trainer (Service 3 training job, see README "TP3").
+# Our part is Service 5 (api-gateway). Service 3 (audio-engine) is REAL (ONNX SVM).
+# Service 4 (agent-orchestrator) is a MOCK with the official service name and the same contract,
+# so the gateway code does not change when the real service replaces it.
+# Training job (on demand):  docker compose --profile training up audio-trainer
 
 name: cardioagent-ops
 
@@ -18,17 +19,25 @@ services:
       ORCHESTRATOR_URL: http://agent-orchestrator:8002
       REQUEST_TIMEOUT: "30"
     depends_on:
-      - audio-engine
-      - agent-orchestrator
+      audio-engine:
+        condition: service_healthy         # wait until the model answers /health
+      agent-orchestrator:
+        condition: service_started
     networks:
       - docker-network
 
-  # ---------- Service 3: audio-engine (MOCK) ----------
+  # ---------- Service 3: audio-engine (REAL: librosa features + ONNX Runtime SVM) ----------
   audio-engine:
     build:
       context: .
-      dockerfile: docker/mocks.Dockerfile
-    command: uvicorn mocks.audio_engine:app --host 0.0.0.0 --port 8001
+      dockerfile: docker/audio-engine.Dockerfile
+    # No "ports": internal only, reached by the gateway through docker-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
     networks:
       - docker-network
 
@@ -61,11 +70,13 @@ services:
     networks:
       - docker-network
 
-  # ---------- Service 3: audio-engine, TP3 training job (real code, next to the mock above) ----------
+  # ---------- Service 3: training job (same image, other command), started only on demand ----------
   audio-trainer:
     build:
       context: .
       dockerfile: docker/audio-engine.Dockerfile
+    command: ["python", "-m", "audio_engine.train_svm"]
+    profiles: ["training"]                 # not started by a plain "docker compose up"
     environment:
       MLFLOW_TRACKING_URI: http://mlflow-server:5000
       MLFLOW_EXPERIMENT: TP3-SVM
