@@ -1,4 +1,4 @@
-# CI/CD for Service 5 (api-gateway): run the tests with coverage, then build and smoke-test the Docker image.
+# CI/CD of CardioAgent-Ops: run the tests with a coverage gate, then build and smoke-test the Docker images.
 name: mlops-ci-cd
 
 on:
@@ -21,7 +21,8 @@ jobs:
       - name: Install dependencies (dev + audio groups, no notebook packages)
         run: uv sync --locked --no-group notebook
 
-      - name: Run pytest with coverage (gateway + TP3 audio_engine, fails if coverage < 80%)
+      # test_api.py (gateway), test_audio.py + test_audio_service.py (audio-engine), test_agents.py (agents schema)
+      - name: Run pytest with coverage (fails if coverage < 80%)
         run: uv run pytest --cov=api --cov=audio_engine --cov-report=term-missing --cov-report=xml --cov-fail-under=80
 
       - name: Upload coverage report
@@ -31,21 +32,31 @@ jobs:
           path: coverage.xml
 
   build:
-    name: Build api-gateway image
+    name: Build ${{ matrix.service }} image
     needs: test            # only build if the tests pass
     runs-on: ubuntu-latest
+    strategy:
+      matrix:              # the same steps, once per image (in parallel)
+        include:
+          - service: api-gateway
+            port: 8000
+          - service: audio-engine
+            port: 8001
     steps:
       - uses: actions/checkout@v4
 
       - name: Build the Docker image
-        run: docker build -f docker/api-gateway.Dockerfile -t api-gateway:${{ github.sha }} .
+        run: docker build -f docker/${{ matrix.service }}.Dockerfile -t ${{ matrix.service }}:${{ github.sha }} .
 
       - name: Smoke test (start the container and call /health)
         run: |
-          docker run -d --name gateway -p 8000:8000 api-gateway:${{ github.sha }}
-          for i in $(seq 1 15); do
-            curl -sf http://localhost:8000/health && exit 0
+          docker run -d --name app -p ${{ matrix.port }}:${{ matrix.port }} ${{ matrix.service }}:${{ github.sha }}
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:${{ matrix.port }}/health && exit 0
             sleep 2
           done
-          docker logs gateway
+          docker logs app
           exit 1
+
+      - name: Image size
+        run: docker image ls ${{ matrix.service }}:${{ github.sha }}
