@@ -7,6 +7,7 @@ Run:  uv run python -m audio_engine.features [--rebuild]
 import argparse
 import os
 from pathlib import Path
+from typing import BinaryIO
 
 import librosa
 import numpy as np
@@ -35,8 +36,8 @@ def feature_names() -> list[str]:
     return names
 
 
-def load_audio(path: Path) -> np.ndarray:
-    """Load a wav: resample to 2000 Hz, mono, then peak-normalise to [-1, 1]."""
+def load_audio(path: Path | BinaryIO) -> np.ndarray:
+    """Load a wav (a path, or a file in memory like io.BytesIO): resample to 2000 Hz, mono, peak-normalise."""
     signal, _ = librosa.load(path, sr=SAMPLE_RATE, mono=True)
     peak = np.max(np.abs(signal)) if signal.size else 0.0
     if peak > 0:  # avoid dividing by zero on a silent file
