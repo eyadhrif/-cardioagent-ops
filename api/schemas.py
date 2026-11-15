@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class HealthResponse(BaseModel):
@@ -28,12 +28,18 @@ class AudioResult(BaseModel):
 
 
 class ClinicalReport(BaseModel):
-    """Answer of Service 4 (agent-orchestrator): the report written by the agents."""
+    """Answer of Service 4 (agent-orchestrator): the report written by the LLM agents.
 
-    summary: str
+    Anti-hallucination guardrail: an LLM may invent fields or answer "true" as text, so this schema is STRICT.
+    """
+
+    # extra="forbid": unknown fields are an error / strict=True: no silent conversion ("true" is not a bool)
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    summary: str = Field(min_length=1)
     risk_level: Literal["low", "medium", "high"]
-    recommendations: list[str]
-    sources: list[str]  # ESC guidelines used by the RAG cardiologist agent
+    recommendations: list[str] = Field(min_length=1)
+    sources: list[str] = Field(min_length=1)  # ESC guidelines used by the RAG agent: a report must cite one
     audit_passed: bool  # result of the auditor agent
 
 
