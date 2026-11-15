@@ -37,6 +37,12 @@ class ClinicalReport(BaseModel):
     audit_passed: bool  # result of the auditor agent
 
 
+class Token(BaseModel):
+    """One piece of text streamed by the agent-orchestrator (SSE event "token")."""
+
+    text: str
+
+
 class AnalysisReport(BaseModel):
     """Final structured JSON report returned to the client by POST /analyze_pcg."""
 

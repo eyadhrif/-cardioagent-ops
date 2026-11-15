@@ -1,20 +1,21 @@
 """MOCK of Service 4 (agent-orchestrator). Returns a FAKE report built from the audio prediction.
 
-The real service would run the LangGraph agents (Analyst, RAG Cardiologist, Auditor).
+The real service would run the LangGraph agents (Analyst, RAG Cardiologist, Auditor) and stream the
+LLM tokens. This mock keeps the same contract: POST /report (JSON) and POST /report/stream (SSE).
 """
 
+import asyncio
+import json
+
 from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
 
 app = FastAPI(title="Mock agent-orchestrator")
 
-
-@app.get("/health")
-def health():
-    return {"status": "ok", "service": "agent-orchestrator (mock)"}
+TOKEN_DELAY_SECONDS = 0.05  # pause between two streamed words, to look like an LLM writing
 
 
-@app.post("/report")
-def report(request: dict):
+def build_report(request: dict) -> dict:
     audio = request["audio"]
     probability = audio["probability_abnormal"]
 
@@ -44,3 +45,27 @@ def report(request: dict):
         "sources": ["ESC Guidelines for the management of valvular heart disease (mock reference)"],
         "audit_passed": True,
     }
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok", "service": "agent-orchestrator (mock)"}
+
+
+@app.post("/report")
+def report(request: dict):
+    return build_report(request)
+
+
+@app.post("/report/stream")
+async def report_stream(request: dict):
+    """Server-Sent Events: the summary word by word ("token"), then the full report ("report")."""
+    full_report = build_report(request)
+
+    async def events():
+        for word in full_report["summary"].split(" "):
+            yield f"event: token\ndata: {json.dumps({'text': word + ' '})}\n\n"
+            await asyncio.sleep(TOKEN_DELAY_SECONDS)
+        yield f"event: report\ndata: {json.dumps(full_report)}\n\n"
+
+    return StreamingResponse(events(), media_type="text/event-stream")

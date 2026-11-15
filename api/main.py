@@ -1,14 +1,16 @@
 """Service 5: api-gateway. Single entry point of CardioAgent-Ops."""
 
 import io
+import json
 import wave
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
-from api.clients import ServiceError, call_audio_engine, call_orchestrator
-from api.schemas import AnalysisReport, FileInfo, HealthResponse
+from api.clients import ServiceError, call_audio_engine, call_orchestrator, stream_orchestrator
+from api.schemas import AnalysisReport, FileInfo, HealthResponse, Token
 
 MAX_FILE_SIZE = 20 * 1024 * 1024  # 20 MB (longest PCG in our dataset is ~2 minutes)
 MAX_PROMPT_LENGTH = 500  # characters: enough for a short clinical context
@@ -82,15 +84,21 @@ def health():
     return HealthResponse(status="ok", service="api-gateway")
 
 
-@app.post("/analyze_pcg", response_model=AnalysisReport)
-async def analyze_pcg(
-    file: UploadFile = File(..., description="Heart sound recording (.wav)"),
-    prompt: str | None = Form(None, description="Optional clinical context, e.g. 'patient has chest pain'"),
-):
-    # 1. Receive and check the inputs (guardrails): the .wav file and the optional prompt
+async def check_inputs(file: UploadFile, prompt: str | None) -> tuple[FileInfo, bytes, str | None]:
+    """Guardrails shared by both endpoints: the .wav file and the optional prompt."""
     content = await file.read()
     file_info = validate_wav(file.filename, content)
-    clean_prompt = validate_prompt(prompt)
+    return file_info, content, validate_prompt(prompt)
+
+
+FILE_FIELD = File(..., description="Heart sound recording (.wav)")
+PROMPT_FIELD = Form(None, description="Optional clinical context, e.g. 'patient has chest pain'")
+
+
+@app.post("/analyze_pcg", response_model=AnalysisReport)
+async def analyze_pcg(file: UploadFile = FILE_FIELD, prompt: str | None = PROMPT_FIELD):
+    # 1. Receive and check the inputs (guardrails): the .wav file and the optional prompt
+    file_info, content, clean_prompt = await check_inputs(file, prompt)
 
     try:
         # 2-3. Send the audio to audio-engine -> prediction (label + probability)
@@ -102,3 +110,40 @@ async def analyze_pcg(
 
     # 8. Return the structured JSON report (validated by Pydantic)
     return AnalysisReport(file=file_info, prompt=clean_prompt, audio=audio, report=report)
+
+
+# ---------- Streaming version (Server-Sent Events) ----------
+
+def sse(event: str, data: dict) -> str:
+    """One Server-Sent Event: an event name, a JSON data line, then an empty line."""
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+async def analysis_events(file_info: FileInfo, content: bytes, prompt: str | None) -> AsyncIterator[str]:
+    """The same flow as /analyze_pcg, but each result is sent to the client as soon as it is ready."""
+    yield sse("file", file_info.model_dump())
+    try:
+        audio = await call_audio_engine(file_info.filename, content)
+        yield sse("audio", audio.model_dump())
+
+        async for item in stream_orchestrator(file_info.filename, audio, prompt):
+            if isinstance(item, Token):
+                yield sse("token", item.model_dump())  # the report text, piece by piece
+            else:
+                report = AnalysisReport(file=file_info, prompt=prompt, audio=audio, report=item)
+                yield sse("report", report.model_dump())
+    except ServiceError as error:
+        # The HTTP status (200) is already sent once streaming starts, so errors become an "error" event
+        yield sse("error", {"status_code": error.status_code, "detail": error.message})
+
+
+@app.post("/analyze_pcg/stream")
+async def analyze_pcg_stream(file: UploadFile = FILE_FIELD, prompt: str | None = PROMPT_FIELD):
+    """Same inputs as /analyze_pcg. Answer: text/event-stream with events file, audio, token..., report (or error)."""
+    # Input errors are still normal HTTP errors (400/413/422): they are checked BEFORE streaming starts
+    file_info, content, clean_prompt = await check_inputs(file, prompt)
+    return StreamingResponse(
+        analysis_events(file_info, content, clean_prompt),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},  # no caching/buffering by proxies
+    )

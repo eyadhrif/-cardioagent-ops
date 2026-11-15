@@ -34,6 +34,7 @@ sequenceDiagram
 | GET | `/` | HTML upload page |
 | GET | `/health` | `{"status": "ok", "service": "api-gateway"}` |
 | POST | `/analyze_pcg` | form fields `file` = a `.wav` file, `prompt` = optional clinical context → JSON report |
+| POST | `/analyze_pcg/stream` | same inputs → **Server-Sent Events** stream (used by the upload page) |
 | GET | `/docs` | Swagger UI (automatic FastAPI documentation) |
 
 Errors: `400` bad/empty/invalid WAV or rejected prompt, `413` file > 20 MB, `422` no file,
@@ -53,6 +54,27 @@ The gateway also validates every answer of the other services with Pydantic (`50
 
 ```bash
 curl -X POST -F "file=@heart.wav" -F "prompt=Patient has chest pain" http://localhost:8000/analyze_pcg
+```
+
+### Streaming (SSE): `POST /analyze_pcg/stream`
+
+The brief asks the gateway to stream the agents' answer to the client in real time. The orchestrator exposes
+`POST /report/stream` (SSE); the gateway reads it with `httpx` (`client.stream` + `aiter_lines`), validates every
+event with Pydantic and forwards it at once. The client receives, in order:
+
+| Event | Data | When |
+|---|---|---|
+| `file` | `FileInfo` (name, size, sample rate, duration) | right after the input checks |
+| `audio` | `AudioResult` (label, probability, model) | when audio-engine answers |
+| `token` | `{"text": "..."}` | each piece of the report text, as the LLM writes it |
+| `report` | the full `AnalysisReport` (same JSON as `/analyze_pcg`) | at the end |
+| `error` | `{"status_code": 502/503/504, "detail": "..."}` | if a service fails during the stream |
+
+Input errors (bad WAV, rejected prompt) are still normal HTTP `400/413/422`, because they are checked **before**
+the stream starts. After that the HTTP status `200` is already sent, so failures become an `error` event.
+
+```bash
+curl -N -X POST -F "file=@heart.wav" http://localhost:8000/analyze_pcg/stream   # -N: print events as they arrive
 ```
 
 ## Project structure
@@ -117,7 +139,7 @@ The gateway reads the service URLs from environment variables
 uv run pytest --cov=api --cov=audio_engine --cov-report=term-missing
 ```
 
-43 tests (28 gateway in `test_api.py` + 15 audio in `test_audio.py`), **98 % coverage** of `api/` + `audio_engine/` (`main.py` 100 %). The other services are replaced by an `httpx.MockTransport`,
+55 tests (40 gateway in `test_api.py` + 15 audio in `test_audio.py`), **98 % coverage** of `api/` + `audio_engine/` (`main.py` 100 %). The other services are replaced by an `httpx.MockTransport`,
 so the tests need no network and no Docker. They cover: health, HTML page, file checks,
 the full flow, service down (503), timeout (504), HTTP error / invalid JSON / wrong format (502).
 

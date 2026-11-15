@@ -14,6 +14,7 @@
     button:disabled { opacity: 0.6; cursor: wait; }
     pre { background: #1f2933; color: #e4e7eb; padding: 16px; border-radius: 8px; overflow-x: auto; white-space: pre-wrap; }
     .error { color: #c0392b; font-weight: bold; }
+    .live { background: #fdf2f1; border-left: 4px solid #c0392b; padding: 12px; border-radius: 6px; }
     label { display: block; margin-top: 14px; font-weight: 600; }
     textarea { width: 100%; box-sizing: border-box; margin-top: 6px; padding: 8px; border-radius: 8px;
                border: 1px solid #cbd2d9; font: inherit; }
@@ -31,14 +32,47 @@
       <button type="submit" id="btn">Analyze</button>
     </form>
     <p id="status"></p>
+    <p id="live" class="live" hidden></p>
     <pre id="result" hidden></pre>
   </div>
 
   <script>
+    // Uses POST /analyze_pcg/stream (Server-Sent Events). EventSource only supports GET,
+    // so we read the stream with fetch() and split it into events ourselves.
     const form = document.getElementById("form");
     const btn = document.getElementById("btn");
     const statusEl = document.getElementById("status");
+    const live = document.getElementById("live");
     const result = document.getElementById("result");
+
+    function showError(text) {
+      statusEl.className = "error";
+      statusEl.textContent = text;
+    }
+
+    function handleEvent(block) {
+      let name = "message", data = "";
+      for (const line of block.split("\n")) {
+        if (line.startsWith("event:")) name = line.slice(6).trim();
+        else if (line.startsWith("data:")) data += line.slice(5).trim();
+      }
+      const payload = JSON.parse(data);
+      if (name === "file") {
+        statusEl.textContent = "File OK (" + payload.duration_seconds + " s). Running the audio model...";
+      } else if (name === "audio") {
+        statusEl.textContent = "Prediction: " + payload.label + " (p = " + payload.probability_abnormal +
+                               "). The agents are writing the report...";
+        live.hidden = false;
+      } else if (name === "token") {
+        live.textContent += payload.text;
+      } else if (name === "report") {
+        statusEl.textContent = "Done.";
+        result.textContent = JSON.stringify(payload, null, 2);
+        result.hidden = false;
+      } else if (name === "error") {
+        showError("Error " + payload.status_code + ": " + payload.detail);
+      }
+    }
 
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -48,19 +82,28 @@
 
       btn.disabled = true;
       statusEl.className = "";
-      statusEl.textContent = "Analyzing...";
+      statusEl.textContent = "Uploading...";
+      live.textContent = "";
+      live.hidden = true;
       result.hidden = true;
       try {
-        const response = await fetch("/analyze_pcg", { method: "POST", body: data });
-        const json = await response.json();
-        if (response.ok) {
-          statusEl.textContent = "Done.";
-        } else {
-          statusEl.className = "error";
-          statusEl.textContent = "Error " + response.status + ": " + JSON.stringify(json.detail);
+        const response = await fetch("/analyze_pcg/stream", { method: "POST", body: data });
+        if (!response.ok) {  // input rejected by the guardrails (400 / 413 / 422)
+          const json = await response.json();
+          showError("Error " + response.status + ": " + JSON.stringify(json.detail));
+          return;
         }
-        result.textContent = JSON.stringify(json, null, 2);
-        result.hidden = false;
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const blocks = buffer.split("\n\n");  // an empty line ends one event
+          buffer = blocks.pop();                // the last piece may be incomplete: keep it
+          for (const block of blocks) if (block.trim()) handleEvent(block);
+        }
       } catch (err) {
         statusEl.className = "error";
         statusEl.textContent = "Network error: " + err;
