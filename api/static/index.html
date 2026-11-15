@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CardioAgent-Ops</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #f4f6f9; color: #1f2933; margin: 0; padding: 16px; }
+    .card { max-width: 720px; margin: 40px auto; background: #fff; border-radius: 12px; padding: 24px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08); }
+    h1 { margin-top: 0; color: #c0392b; }
+    button { background: #c0392b; color: #fff; border: 0; border-radius: 8px; padding: 10px 18px;
+             font-size: 16px; cursor: pointer; margin-top: 12px; }
+    button:disabled { opacity: 0.6; cursor: wait; }
+    pre { background: #1f2933; color: #e4e7eb; padding: 16px; border-radius: 8px; overflow-x: auto; white-space: pre-wrap; }
+    .error { color: #c0392b; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>CardioAgent-Ops</h1>
+    <p>Upload a heart sound recording (<b>.wav</b>) to get an automatic analysis report.</p>
+    <form id="form">
+      <input type="file" id="file" accept=".wav" required>
+      <br>
+      <button type="submit" id="btn">Analyze</button>
+    </form>
+    <p id="status"></p>
+    <pre id="result" hidden></pre>
+  </div>
+
+  <script>
+    const form = document.getElementById("form");
+    const btn = document.getElementById("btn");
+    const statusEl = document.getElementById("status");
+    const result = document.getElementById("result");
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const data = new FormData();
+      data.append("file", document.getElementById("file").files[0]);
+
+      btn.disabled = true;
+      statusEl.className = "";
+      statusEl.textContent = "Analyzing...";
+      result.hidden = true;
+      try {
+        const response = await fetch("/analyze_pcg", { method: "POST", body: data });
+        const json = await response.json();
+        if (response.ok) {
+          statusEl.textContent = "Done.";
+        } else {
+          statusEl.className = "error";
+          statusEl.textContent = "Error " + response.status + ": " + JSON.stringify(json.detail);
+        }
+        result.textContent = JSON.stringify(json, null, 2);
+        result.hidden = false;
+      } catch (err) {
+        statusEl.className = "error";
+        statusEl.textContent = "Network error: " + err;
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
